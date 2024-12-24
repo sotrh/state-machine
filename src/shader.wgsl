@@ -15,7 +15,76 @@ fn fullscreen_quad(@builtin(vertex_index) i: u32) -> VsOut {
     return VsOut(vec4(uv * 2.0 - 1.0, 0.0, 1.0), uv);
 }
 
+fn dot2(x: vec2<f32>) -> f32 {
+    return dot(x, x);
+}
+
+fn sdf_line(p: vec2<f32>, a: vec2<f32>, b: vec2<f32>) -> f32 {
+    let pa = p - a;
+    let ba = b - a;
+    let h = clamp(dot(pa, ba) / dot(ba, ba), 0.0, 1.0);
+    return length(pa - ba * h);
+}
+
+fn sdf_bezier(P: vec2<f32>, A: vec2<f32>, B: vec2<f32>, C: vec2<f32>) -> f32 {
+    let a = B - A;
+    let b = A - 2.0 * B + C;
+    let c = a * 2.0;
+    let d = A - P;
+    let kk = 1.0 / dot(b, b);
+    let kx = kk * dot(a, b);
+    let ky = kk * (2.0 * dot(a, a) +  dot(d, b)) / 3.0;
+    let kz = kk * dot(d, a);
+    let p = ky - kx * kx;
+    let p3 = p * p * p;
+    let q = kx * (2.0 * kx * kx - 3.0 * ky) + kz;
+
+    var h = q * q + 4.0 * p3;
+    var res = 0.0;
+
+    if h >= 0.0 {
+        h = sqrt(h);
+        let x = (vec2(h, -h) - q) / 2.0;
+        let uv =  sign(x) * pow(abs(x), vec2(1.0/3.0));
+        let t = clamp(uv.x + uv.y - kx, 0.0, 1.0);
+        res = dot2(d + (c + b * t) * t);
+    } else {
+        let z = sqrt(-p);
+        let v = acos(q/(p * z * 2.0)) / 3.0;
+        let m = cos(v);
+        let n = sin(v) * 1.732050808;
+        let t = clamp(vec3(m+m, -n-m, n-m) * z - kx, vec3(0.0), vec3(1.0));
+        res = min(
+            dot2(d + (c + b * t.x) * t.x),
+            dot2(d + (c + b * t.y) * t.y),
+        );
+        // The third root cannot be the closest
+        // res = min(res,dot2(d+(c+b*t.z)*t.z));
+    }
+
+    return sqrt(res);
+}
+
+struct Line {
+    a: vec2<f32>,
+    b: vec2<f32>,
+}
+
+@group(0)
+@binding(0)
+var<storage, read> lines: array<Line>;
+
 @fragment
 fn textured(vs: VsOut) -> @location(0) vec4<f32> {
-    return vec4(vs.uv, 0.0, 1.0);
+    let p = vs.uv;
+    var d = 1000000.0;
+
+    for (var i = 0u; i < arrayLength(&lines); i += 1u) {
+        var line = lines[i];
+        d = min(d, sdf_line(p, line.a, line.b));
+    }
+
+    let col = vec3(fract(d * 10.0));
+
+    return vec4(col, 1.0);
 }

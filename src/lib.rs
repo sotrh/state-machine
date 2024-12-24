@@ -1,13 +1,18 @@
-pub mod utils;
+mod data;
+mod resources;
+mod utils;
 
 use std::sync::Arc;
 
 use anyhow::Context;
+use data::Line;
+use resources::buffer::BackedBuffer;
 use utils::RenderPipelineBuilder;
 use winit::{
     application::ApplicationHandler,
-    event::WindowEvent,
+    event::{KeyEvent, MouseButton, WindowEvent},
     event_loop::{ActiveEventLoop, EventLoop},
+    keyboard::{ModifiersKeyState, ModifiersState},
     window::Window,
 };
 
@@ -17,9 +22,12 @@ use wasm_bindgen::prelude::*;
 pub const CANVAS_ID: &str = "canvas";
 
 pub struct App {
-    canvas: Option<Canvas>,
     #[cfg(target_arch = "wasm32")]
     proxy: Option<winit::event_loop::EventLoopProxy<Canvas>>,
+    canvas: Option<Canvas>,
+    current_line: Option<Line>,
+    shift_pressed: bool,
+    cursor: glam::Vec2,
 }
 
 impl App {
@@ -27,7 +35,10 @@ impl App {
         #[cfg(target_arch = "wasm32")]
         let proxy = Some(event_loop.create_proxy());
         Self {
+            cursor: glam::vec2(0.0, 0.0),
             canvas: None,
+            current_line: None,
+            shift_pressed: false,
             #[cfg(target_arch = "wasm32")]
             proxy,
         }
@@ -104,6 +115,35 @@ impl ApplicationHandler<Canvas> for App {
             WindowEvent::RedrawRequested => {
                 canvas.render(event_loop);
             }
+            WindowEvent::ModifiersChanged(mods) => {
+                self.shift_pressed = mods.lshift_state() == ModifiersKeyState::Pressed
+                    || mods.rshift_state() == ModifiersKeyState::Pressed;
+            }
+            WindowEvent::CursorMoved { position, .. } => {
+                self.cursor = canvas.project_point(position.x as f32, position.y as f32);
+            }
+            WindowEvent::MouseInput { state, button, .. } => match (button, state.is_pressed()) {
+                (MouseButton::Left, true) => {
+                    if let Some(line) = &mut self.current_line {
+                        line.b = self.cursor;
+                    } else {
+                        self.current_line = Some(Line {
+                            a: self.cursor,
+                            b: self.cursor,
+                        });
+                    }
+                }
+                (MouseButton::Left, false) => {
+                    if let Some(mut line) = self.current_line.take() {
+                        line.b = self.cursor;
+                        canvas.finish_line(line);
+                    }
+                }
+                // _ => {}
+                state => {
+                    println!("{state:?}");
+                }
+            },
             _ => {}
         }
     }
@@ -119,6 +159,8 @@ pub struct Canvas {
     is_webgpu_supported: bool,
     #[allow(unused)]
     window: Arc<Window>,
+    lines: BackedBuffer<Line>,
+    geometry_bind_group: wgpu::BindGroup,
 }
 
 impl Canvas {
@@ -180,6 +222,8 @@ impl Canvas {
         #[cfg(not(target_arch = "wasm32"))]
         surface.configure(&device, &config);
 
+        let lines: BackedBuffer<Line> = BackedBuffer::with_capacity(&device, 16, wgpu::BufferUsages::STORAGE);
+        
         let shader = device.create_shader_module(wgpu::include_wgsl!("shader.wgsl"));
         let fullscreen_quad = RenderPipelineBuilder::new()
             .vertex(wgpu::VertexState {
@@ -200,11 +244,24 @@ impl Canvas {
             })
             .build(&device)?;
 
+        let geometry_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("geometry"),
+            layout: &fullscreen_quad.get_bind_group_layout(0),
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: lines.buffer().as_entire_binding(),
+                }
+            ]
+        });
+
         Ok(Self {
             config,
             surface,
             device,
             queue,
+            lines,
+            geometry_bind_group,
             fullscreen_quad,
             #[cfg(target_arch = "wasm32")]
             is_webgpu_supported,
@@ -231,7 +288,10 @@ impl Canvas {
             }
         };
 
-        let view = frame.texture.create_view(&Default::default());
+        let view = frame.texture.create_view(&wgpu::TextureViewDescriptor {
+            format: self.config.view_formats.get(0).copied(),
+            ..Default::default()
+        });
         let mut encoder = self.device.create_command_encoder(&Default::default());
 
         {
@@ -248,11 +308,24 @@ impl Canvas {
             });
 
             pass.set_pipeline(&self.fullscreen_quad);
+            pass.set_bind_group(0, &self.geometry_bind_group, &[]);
             pass.draw(0..3, 0..1);
         }
 
         self.queue.submit([encoder.finish()]);
         frame.present();
+    }
+
+    pub fn finish_line(&mut self, line: Line) {
+        self.lines.batch(&self.device, &self.queue).push(line);
+        self.window.request_redraw();
+    }
+    
+    pub fn project_point(&self, x: f32, y: f32) -> glam::Vec2 {
+        glam::vec2(
+            x / self.config.width.max(1) as f32,
+            1.0 - y / self.config.height.max(1) as f32,
+        )
     }
 }
 
