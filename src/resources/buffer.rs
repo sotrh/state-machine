@@ -1,4 +1,4 @@
-use wgpu::{core::device::queue, util::{BufferInitDescriptor, DeviceExt}};
+use wgpu::util::{BufferInitDescriptor, DeviceExt};
 
 pub struct BackedBuffer<T> {
     data: Vec<T>,
@@ -53,10 +53,12 @@ impl<T: bytemuck::Pod + bytemuck::Zeroable> BackedBuffer<T> {
         Batch::new(self, device, queue)
     }
 
+    #[allow(unused)]
     pub fn batch_indexed<'a>(&'a mut self, device: &'a wgpu::Device, queue: &'a wgpu::Queue, indices: &'a mut BackedBuffer<u32>) -> IndexedBatch<'a, T> {
         IndexedBatch::new(device, queue, self, indices)
     }
-
+    
+    #[allow(unused)]
     pub fn slice(&self) -> wgpu::BufferSlice<'_> {
         self.buffer.slice(..)
     }
@@ -144,12 +146,14 @@ impl<'a, T: bytemuck::Pod + bytemuck::Zeroable> IndexedBatch<'a, T> {
         }
     }
     
+    #[allow(unused)]
     pub fn vertex(&mut self, v: T) -> &mut Self {
         self.indices.data.push(self.batch.vertices.len());
         self.batch.push(v);
         self
     }
-
+    
+    #[allow(unused)]
     pub fn line(&mut self, a: T, b: T) -> &mut Self {
         self.vertex(a);
         self.vertex(b);

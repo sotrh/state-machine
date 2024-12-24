@@ -30,26 +30,31 @@ impl<'a> RenderPipelineBuilder<'a> {
         }
     }
     
+    #[allow(unused)]
     pub fn label(mut self, value: &'a str) -> Self {
         self.label = Some(value);
         self
     }
-
+    
+    #[allow(unused)]
     pub fn layout(mut self, layout: &'a wgpu::PipelineLayout) -> Self {
         self.layout = Some(layout);
         self
     }
 
+    #[allow(unused)]
     pub fn vertex(mut self, state: VertexState<'a>) -> Self {
         self.vertex = Some(state);
         self
     }
 
+    #[allow(unused)]
     pub fn fragment(mut self, state: FragmentState<'a>) -> Self {
         self.fragment = Some(state);
         self
     }
 
+    #[allow(unused)]
     pub fn depth(
         mut self,
         format: wgpu::TextureFormat,
@@ -69,6 +74,7 @@ impl<'a> RenderPipelineBuilder<'a> {
         self
     }
 
+    #[allow(unused)]
     pub fn topology(mut self, value: wgpu::PrimitiveTopology) -> Self {
         self.primitive.topology = value;
         self

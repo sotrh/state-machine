@@ -10,9 +10,9 @@ use resources::buffer::BackedBuffer;
 use utils::RenderPipelineBuilder;
 use winit::{
     application::ApplicationHandler,
-    event::{KeyEvent, MouseButton, WindowEvent},
+    event::{MouseButton, WindowEvent},
     event_loop::{ActiveEventLoop, EventLoop},
-    keyboard::{ModifiersKeyState, ModifiersState},
+    keyboard::ModifiersKeyState,
     window::Window,
 };
 
