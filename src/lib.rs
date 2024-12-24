@@ -5,7 +5,7 @@ mod utils;
 use std::sync::Arc;
 
 use anyhow::Context;
-use data::Line;
+use data::{GeometryInfo, Line};
 use resources::buffer::BackedBuffer;
 use utils::RenderPipelineBuilder;
 use winit::{
@@ -160,7 +160,9 @@ pub struct Canvas {
     #[allow(unused)]
     window: Arc<Window>,
     lines: BackedBuffer<Line>,
+    current_lines_version: u32,
     geometry_bind_group: wgpu::BindGroup,
+    geo_info: BackedBuffer<GeometryInfo>,
 }
 
 impl Canvas {
@@ -223,6 +225,7 @@ impl Canvas {
         surface.configure(&device, &config);
 
         let lines: BackedBuffer<Line> = BackedBuffer::with_capacity(&device, 16, wgpu::BufferUsages::STORAGE);
+        let geo_info = BackedBuffer::with_data(&device, vec![GeometryInfo::new(lines.len())], wgpu::BufferUsages::UNIFORM);
         
         let shader = device.create_shader_module(wgpu::include_wgsl!("shader.wgsl"));
         let fullscreen_quad = RenderPipelineBuilder::new()
@@ -237,7 +240,7 @@ impl Canvas {
                 entry_point: Some("textured"),
                 compilation_options: Default::default(),
                 targets: &[Some(wgpu::ColorTargetState {
-                    format: config.format,
+                    format: config.view_formats[0],
                     blend: None,
                     write_mask: wgpu::ColorWrites::ALL,
                 })],
@@ -250,6 +253,10 @@ impl Canvas {
             entries: &[
                 wgpu::BindGroupEntry {
                     binding: 0,
+                    resource: geo_info.buffer().as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
                     resource: lines.buffer().as_entire_binding(),
                 }
             ]
@@ -260,6 +267,8 @@ impl Canvas {
             surface,
             device,
             queue,
+            current_lines_version: lines.version(),
+            geo_info,
             lines,
             geometry_bind_group,
             fullscreen_quad,
@@ -317,7 +326,29 @@ impl Canvas {
     }
 
     pub fn finish_line(&mut self, line: Line) {
-        self.lines.batch(&self.device, &self.queue).push(line);
+        log::error!("Finish line: {line:?}");
+        {
+            self.lines.batch(&self.device, &self.queue).push(line);
+            self.geo_info.update(&self.queue, GeometryInfo::new(self.lines.len()));
+        }
+
+        if self.lines.version() != self.current_lines_version {
+            self.geometry_bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("lines"),
+                layout: &self.fullscreen_quad.get_bind_group_layout(0),
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: self.geo_info.buffer().as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: self.lines.buffer().as_entire_binding(),
+                    }
+                ]
+            });
+        }
+
         self.window.request_redraw();
     }
     

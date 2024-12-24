@@ -4,6 +4,7 @@ pub struct BackedBuffer<T> {
     data: Vec<T>,
     buffer: wgpu::Buffer,
     usage: wgpu::BufferUsages,
+    version: u32,
 }
 
 impl<T: bytemuck::Pod + bytemuck::Zeroable> BackedBuffer<T> {
@@ -22,6 +23,7 @@ impl<T: bytemuck::Pod + bytemuck::Zeroable> BackedBuffer<T> {
                 mapped_at_creation: false,
             }),
             usage,
+            version: 0,
         }
     }
 
@@ -35,11 +37,16 @@ impl<T: bytemuck::Pod + bytemuck::Zeroable> BackedBuffer<T> {
             }),
             data,
             usage,
+            version: 0,
         }
     }
 
     pub fn len(&self) -> u32 {
         self.data.len() as _
+    }
+
+    pub fn version(&self) -> u32 {
+        self.version
     }
 
     pub fn batch<'a>(&'a mut self, device: &'a wgpu::Device, queue: &'a wgpu::Queue) -> Batch<'a, T> {
@@ -104,6 +111,7 @@ impl<'a, T: bytemuck::Pod + bytemuck::Zeroable> Drop for Batch<'a, T> {
                     0,
                     bytemuck::cast_slice(&self.vertices.data),
                 );
+                self.vertices.version += 1;
             } else {
                 let offset = (self.start_vertex * size_of::<T>()) as wgpu::BufferAddress;
                 self.queue.write_buffer(
@@ -165,6 +173,7 @@ impl<'a, T: bytemuck::Pod + bytemuck::Zeroable> Drop for IndexedBatch<'a, T> {
                     0,
                     bytemuck::cast_slice(&self.indices.data),
                 );
+                self.indices.version += 1;
             } else {
                 let offset = (self.start_index * size_of::<T>()) as wgpu::BufferAddress;
                 self.batch.queue.write_buffer(
