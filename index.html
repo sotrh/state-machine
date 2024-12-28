@@ -9,9 +9,18 @@
             margin: 0;
             padding: 0;
         }
+
+        canvas {
+            display: block;
+        }
+
+        .hidden {
+            display: none;
+        }
     </style>
 </head>
 <body>
+    <h1 id="error" class="hidden">WebGPU is required for this example</h1>
     <canvas id="canvas"></canvas>
     <script>
         function resizeCanvas() {

@@ -63,9 +63,8 @@ impl<T: bytemuck::Pod + bytemuck::Zeroable> BackedBuffer<T> {
         self.buffer.slice(..)
     }
     
-    pub fn update(&mut self, queue: &wgpu::Queue, data: T) {
-        self.data.clear();
-        self.data.push(data);
+    pub fn update(&mut self, queue: &wgpu::Queue, mut f: impl FnMut(&mut [T])) {
+        f(&mut self.data);
         queue.write_buffer(&self.buffer, 0, bytemuck::cast_slice(&self.data));
     }
 

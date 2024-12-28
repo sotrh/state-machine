@@ -71,7 +71,9 @@ struct Line {
 }
 
 struct GeometryInfo {
+    preview_line: Line,
     num_lines: u32,
+    mode: u32,
 }
 
 @group(0)
@@ -83,17 +85,19 @@ var<uniform> geo_info: GeometryInfo;
 var<storage, read> lines: array<Line>;
 
 @fragment
-fn textured(vs: VsOut) -> @location(0) vec4<f32> {
+fn canvas(vs: VsOut) -> @location(0) vec4<f32> {
     let p = vs.uv;
-    var d = 1000000.0;
+    var d = sdf_line(p, geo_info.preview_line.a, geo_info.preview_line.b);
 
     for (var i = 0u; i < arrayLength(&lines) && i < geo_info.num_lines; i += 1u) {
         var line = lines[i];
         d = min(d, sdf_line(p, line.a, line.b));
     }
 
-    let col = vec3(fract(d * 10.0));
-    // let col = vec3(fract(d * 10.0), f32(arrayLength(&lines) > 1), 0.0);
+    var col = mix(vec3(0.0, 0.0, 0.0), vec3(0.0, 0.0, 1.0), f32(d < 0.01));
+    if (geo_info.mode == 1) {
+        col = vec3(fract(d * 20.0));
+    }
 
     return vec4(col, 1.0);
 }
