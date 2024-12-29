@@ -242,7 +242,7 @@ impl Canvas {
             BackedBuffer::with_capacity(&device, 16, wgpu::BufferUsages::STORAGE);
         let geo_info = BackedBuffer::with_data(
             &device,
-            vec![GeometryInfo::new(lines.len(), data::DrawMode::Color)],
+            vec![GeometryInfo::new(lines.len(), data::DrawMode::Color, config.width, config.height)],
             wgpu::BufferUsages::UNIFORM,
         );
 
@@ -301,6 +301,7 @@ impl Canvas {
         self.config.width = width.max(1);
         self.config.height = height.max(1);
         self.surface.configure(&self.device, &self.config);
+        self.geo_info.update(&self.queue, |data| data[0].resize(width, height));
     }
 
     pub fn render(&mut self, event_loop: &ActiveEventLoop) {
@@ -346,8 +347,9 @@ impl Canvas {
     }
 
     pub fn project_point(&self, x: f32, y: f32) -> glam::Vec2 {
+        let aspect_ratio = self.config.width as f32 / self.config.height as f32;
         glam::vec2(
-            x / self.config.width.max(1) as f32,
+            x / self.config.width.max(1) as f32 * aspect_ratio,
             1.0 - y / self.config.height.max(1) as f32,
         )
     }

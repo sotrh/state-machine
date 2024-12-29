@@ -74,6 +74,7 @@ struct GeometryInfo {
     preview_line: Line,
     num_lines: u32,
     mode: u32,
+    aspect_ratio: f32,
 }
 
 @group(0)
@@ -86,7 +87,7 @@ var<storage, read> lines: array<Line>;
 
 @fragment
 fn canvas(vs: VsOut) -> @location(0) vec4<f32> {
-    let p = vs.uv;
+    let p = vec2(vs.uv.x * geo_info.aspect_ratio, vs.uv.y);
     var d = sdf_line(p, geo_info.preview_line.a, geo_info.preview_line.b);
 
     for (var i = 0u; i < arrayLength(&lines) && i < geo_info.num_lines; i += 1u) {
@@ -94,9 +95,9 @@ fn canvas(vs: VsOut) -> @location(0) vec4<f32> {
         d = min(d, sdf_line(p, line.a, line.b));
     }
 
-    var col = mix(vec3(0.0, 0.0, 0.0), vec3(0.0, 0.0, 1.0), f32(d < 0.01));
+    var col = mix(vec3(0.0, 0.0, 0.0), vec3(0.0, 0.0, 1.0), smoothstep(0.015, 0.01, d));
     if (geo_info.mode == 1) {
-        col = vec3(fract(d * 20.0));
+        col = mix(vec3(0.0, 0.0, 0.0), vec3(0.0, 0.0, 1.0), fract(d * 20.0));
     }
 
     return vec4(col, 1.0);

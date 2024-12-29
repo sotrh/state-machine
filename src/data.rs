@@ -34,12 +34,13 @@ pub struct GeometryInfo {
     pub preview_line: Line,
     pub num_lines: u32,
     pub mode: DrawMode,
-    // _padding0: u32,
+    aspect_ratio: f32,
+    _padding0: u32,
     // _padding1: u32,
 }
 
 impl GeometryInfo {
-    pub fn new(num_lines: u32, mode: DrawMode) -> Self {
+    pub fn new(num_lines: u32, mode: DrawMode, width: u32, height: u32) -> Self {
         Self {
             preview_line: Line {
                 a: vec2(0.0, 0.0),
@@ -47,8 +48,13 @@ impl GeometryInfo {
             },
             num_lines,
             mode,
-            // _padding0: 0,
+            aspect_ratio: width as f32 / height as f32,
+            _padding0: 0,
             // _padding1: 0,
         }
+    }
+
+    pub fn resize(&mut self, width: u32, height: u32) {
+        self.aspect_ratio = width as f32 / height as f32;
     }
 }
