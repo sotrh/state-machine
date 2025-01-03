@@ -1,0 +1,22 @@
+name: Deploy to GH Pages
+on:
+  push:
+    branches: [ main ]
+env:
+  CARGO_TERM_COLOR: always
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+
+      - name: Build WASM
+        run: |
+          cargo install wasm-pack
+          wasm-pack build --no-typescript --no-pack --target=web
+
+      - name: Deploy
+        uses: JamesIves/github-pages-deploy-action@4.1.5
+        with:
+          branch: gh-pages
+          folder: .
