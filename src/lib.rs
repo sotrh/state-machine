@@ -1,18 +1,16 @@
-mod data;
 mod resources;
 mod utils;
 
 use std::sync::Arc;
 
 use anyhow::Context;
-use data::{DrawMode, GeometryInfo, Line};
-use resources::buffer::BackedBuffer;
+use resources::{font::Font, Resources};
 use utils::RenderPipelineBuilder;
 use winit::{
     application::ApplicationHandler,
     event::{KeyEvent, MouseButton, WindowEvent},
     event_loop::{ActiveEventLoop, EventLoop},
-    keyboard::{KeyCode, ModifiersKeyState, PhysicalKey},
+    keyboard::{KeyCode, PhysicalKey},
     window::Window,
 };
 
@@ -25,11 +23,6 @@ pub struct App {
     #[cfg(target_arch = "wasm32")]
     proxy: Option<winit::event_loop::EventLoopProxy<Canvas>>,
     canvas: Option<Canvas>,
-    current_line: Line,
-    drawing: bool,
-    shift_pressed: bool,
-    cursor: glam::Vec2,
-    mode: DrawMode,
 }
 
 impl App {
@@ -37,15 +30,7 @@ impl App {
         #[cfg(target_arch = "wasm32")]
         let proxy = Some(event_loop.create_proxy());
         Self {
-            cursor: glam::vec2(0.0, 0.0),
             canvas: None,
-            current_line: Line {
-                a: glam::vec2(0.0, 0.0),
-                b: glam::vec2(0.0, 0.0),
-            },
-            mode: DrawMode::Color,
-            drawing: false,
-            shift_pressed: false,
             #[cfg(target_arch = "wasm32")]
             proxy,
         }
@@ -122,26 +107,11 @@ impl ApplicationHandler<Canvas> for App {
             WindowEvent::RedrawRequested => {
                 canvas.render(event_loop);
             }
-            WindowEvent::ModifiersChanged(mods) => {
-                self.shift_pressed = mods.lshift_state() == ModifiersKeyState::Pressed
-                    || mods.rshift_state() == ModifiersKeyState::Pressed;
-            }
-            WindowEvent::CursorMoved { position, .. } => {
-                self.cursor = canvas.project_point(position.x as f32, position.y as f32);
-                self.current_line.b = self.cursor;
-                if !self.drawing {
-                    self.current_line.a = self.cursor;
-                }
-                canvas.preview_line(self.current_line);
-            }
+            WindowEvent::ModifiersChanged(mods) => {}
+            WindowEvent::CursorMoved { position, .. } => {}
             WindowEvent::MouseInput { state, button, .. } => match (button, state.is_pressed()) {
-                (MouseButton::Left, true) => {
-                    self.drawing = true;
-                }
-                (MouseButton::Left, false) => {
-                    self.drawing = false;
-                    canvas.finish_line(self.current_line);
-                }
+                (MouseButton::Left, true) => {}
+                (MouseButton::Left, false) => {}
                 _ => {}
             },
             WindowEvent::KeyboardInput {
@@ -154,9 +124,7 @@ impl ApplicationHandler<Canvas> for App {
                 ..
             } => match (code, state.is_pressed()) {
                 (KeyCode::Escape, true) => event_loop.exit(),
-                (KeyCode::Space, true) => {
-                    canvas.set_mode(self.mode.increment());
-                }
+                (KeyCode::Space, true) => {}
                 _ => {}
             },
             _ => {}
@@ -172,10 +140,6 @@ pub struct Canvas {
     fullscreen_quad: wgpu::RenderPipeline,
     #[allow(unused)]
     window: Arc<Window>,
-    lines: BackedBuffer<Line>,
-    current_lines_version: u32,
-    geometry_bind_group: wgpu::BindGroup,
-    geo_info: BackedBuffer<GeometryInfo>,
 }
 
 impl Canvas {
@@ -188,7 +152,9 @@ impl Canvas {
         if !is_webgpu_supported {
             let window = wgpu::web_sys::window().unwrap_throw();
             let document = window.document().unwrap_throw();
-            let h1 = document.get_element_by_id("error").unwrap_throw()
+            let h1 = document
+                .get_element_by_id("error")
+                .unwrap_throw()
                 .dyn_into::<wgpu::web_sys::HtmlElement>()
                 .unwrap_throw();
 
@@ -238,14 +204,6 @@ impl Canvas {
         #[cfg(not(target_arch = "wasm32"))]
         surface.configure(&device, &config);
 
-        let lines: BackedBuffer<Line> =
-            BackedBuffer::with_capacity(&device, 16, wgpu::BufferUsages::STORAGE);
-        let geo_info = BackedBuffer::with_data(
-            &device,
-            vec![GeometryInfo::new(lines.len(), data::DrawMode::Color, config.width, config.height)],
-            wgpu::BufferUsages::UNIFORM,
-        );
-
         log::info!("Creating canvas pipeline");
         let shader = device.create_shader_module(wgpu::include_wgsl!("shader.wgsl"));
         let fullscreen_quad = RenderPipelineBuilder::new()
@@ -267,33 +225,18 @@ impl Canvas {
             })
             .build(&device)?;
 
-        log::info!("Creating geometry bind group");
-        let geometry_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("geometry"),
-            layout: &fullscreen_quad.get_bind_group_layout(0),
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: geo_info.buffer().as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: lines.buffer().as_entire_binding(),
-                },
-            ],
-        });
+        let res = Resources::new("res");
+        let font = Font::load(&res, "OpenSans MSDF.zip", &device, &queue)?;
+
+        log::debug!("font: {:?}", font.info);
 
         Ok(Self {
             config,
             surface,
             device,
             queue,
-            current_lines_version: lines.version(),
-            geo_info,
-            lines,
-            geometry_bind_group,
-            fullscreen_quad,
             window,
+            fullscreen_quad,
         })
     }
 
@@ -301,7 +244,6 @@ impl Canvas {
         self.config.width = width.max(1);
         self.config.height = height.max(1);
         self.surface.configure(&self.device, &self.config);
-        self.geo_info.update(&self.queue, |data| data[0].resize(width, height));
     }
 
     pub fn render(&mut self, event_loop: &ActiveEventLoop) {
@@ -338,7 +280,6 @@ impl Canvas {
             });
 
             pass.set_pipeline(&self.fullscreen_quad);
-            pass.set_bind_group(0, &self.geometry_bind_group, &[]);
             pass.draw(0..3, 0..1);
         }
 
@@ -352,47 +293,6 @@ impl Canvas {
             x / self.config.width.max(1) as f32 * aspect_ratio,
             1.0 - y / self.config.height.max(1) as f32,
         )
-    }
-
-    pub fn finish_line(&mut self, line: Line) {
-        {
-            self.lines.batch(&self.device, &self.queue).push(line);
-            self.geo_info.update(&self.queue, |data| {
-                data[0].num_lines += 1;
-            });
-        }
-
-        if self.lines.version() != self.current_lines_version {
-            self.geometry_bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some("lines"),
-                layout: &self.fullscreen_quad.get_bind_group_layout(0),
-                entries: &[
-                    wgpu::BindGroupEntry {
-                        binding: 0,
-                        resource: self.geo_info.buffer().as_entire_binding(),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 1,
-                        resource: self.lines.buffer().as_entire_binding(),
-                    },
-                ],
-            });
-        }
-
-        self.window.request_redraw();
-    }
-
-    pub fn preview_line(&mut self, preview_line: Line) {
-        self.geo_info.update(&self.queue, |data| {
-            data[0].preview_line = preview_line;
-        });
-        self.window.request_redraw();
-    }
-
-    pub fn set_mode(&mut self, mode: DrawMode) {
-        self.geo_info
-            .update(&self.queue, |data| data[0].mode = mode);
-        self.window.request_redraw();
     }
 }
 
