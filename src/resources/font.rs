@@ -74,6 +74,10 @@ impl Font {
 
         Ok(Self { texture, info })
     }
+
+    pub fn glyph(&self, c: char) -> Option<&Glyph> {
+        self.info.glyphs.iter().find(|glyph| glyph.char == c)
+    }
 }
 
 #[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
@@ -85,23 +89,22 @@ pub struct FontData {
     common: FontCommonInfo,
     #[serde(rename = "distanceField")]
     distance_field: DistanceFieldInfo,
-    // kernings
 }
 
 #[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
 pub struct Glyph {
-    id: u32,
-    index: u32,
-    page: u32,
-    char: char,
-    width: u32,
-    height: u32,
-    x: u32,
-    y: u32,
-    xoffset: i32,
-    yoffset: i32,
-    xadvance: u32,
-    chnl: u32,
+    pub id: u32,
+    pub index: u32,
+    pub page: u32,
+    pub char: char,
+    pub width: u32,
+    pub height: u32,
+    pub x: u32,
+    pub y: u32,
+    pub xoffset: i32,
+    pub yoffset: i32,
+    pub xadvance: u32,
+    pub chnl: u32,
 }
 
 #[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]

@@ -6,6 +6,7 @@ use std::sync::Arc;
 use anyhow::Context;
 use resources::{font::Font, Resources};
 use utils::RenderPipelineBuilder;
+use wgpu::util::{BufferInitDescriptor, DeviceExt};
 use winit::{
     application::ApplicationHandler,
     event::{KeyEvent, MouseButton, WindowEvent},
@@ -138,8 +139,13 @@ pub struct Canvas {
     device: wgpu::Device,
     queue: wgpu::Queue,
     fullscreen_quad: wgpu::RenderPipeline,
+    font: Font,
     #[allow(unused)]
     window: Arc<Window>,
+    font_atlas: wgpu::BindGroup,
+    text_vb: wgpu::Buffer,
+    text_ib: wgpu::Buffer,
+    textured: wgpu::RenderPipeline,
 }
 
 impl Canvas {
@@ -225,10 +231,103 @@ impl Canvas {
             })
             .build(&device)?;
 
+        #[derive(Debug, Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+        #[repr(C)]
+        struct TexturedVertex {
+            position: glam::Vec2,
+            uv: glam::Vec2,
+        }
+
+        impl TexturedVertex {
+            const VB_DESC: wgpu::VertexBufferLayout<'static> = wgpu::VertexBufferLayout {
+                array_stride: std::mem::size_of::<TexturedVertex>() as _,
+                step_mode: wgpu::VertexStepMode::Vertex,
+                attributes: &wgpu::vertex_attr_array![
+                    0 => Float32x2,
+                    1 => Float32x2,
+                ],
+            };
+        }
+
+        let textured = RenderPipelineBuilder::new()
+            .vertex(wgpu::VertexState {
+                module: &shader,
+                entry_point: Some("textured"),
+                compilation_options: Default::default(),
+                buffers: &[TexturedVertex::VB_DESC],
+            })
+            .fragment(wgpu::FragmentState {
+                module: &shader,
+                entry_point: Some("canvas"),
+                compilation_options: Default::default(),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format: config.view_formats[0],
+                    blend: None,
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+            })
+            .build(&device)?;
+
         let res = Resources::new("res");
         let font = Font::load(&res, "OpenSans MSDF.zip", &device, &queue)?;
 
-        log::debug!("font: {:?}", font.info);
+        let glyph = font.glyph('M').unwrap();
+        let tex_width = font.texture.width() as f32;
+        let tex_height = font.texture.height() as f32;
+        let min_uv = glam::vec2(glyph.x as f32 / tex_width, glyph.y as f32 / tex_height);
+        let max_uv = min_uv + glam::vec2(glyph.width as f32 / tex_width, glyph.height as f32 /tex_height);
+
+        let text_vb = device.create_buffer_init(&BufferInitDescriptor {
+            label: Some("text_vb"),
+            contents: bytemuck::cast_slice(&[
+                TexturedVertex {
+                    position: glam::vec2(-1.0, -1.0),
+                    uv: glam::vec2(min_uv.x, max_uv.y),
+                },
+                TexturedVertex {
+                    position: glam::vec2(1.0, -1.0),
+                    uv: glam::vec2(max_uv.x, max_uv.y),
+                },
+                TexturedVertex {
+                    position: glam::vec2(1.0, 1.0),
+                    uv: glam::vec2(max_uv.x, min_uv.y),
+                },
+                TexturedVertex {
+                    position: glam::vec2(-1.0, 1.0),
+                    uv: glam::vec2(min_uv.x, min_uv.y),
+                },
+            ]),
+            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::VERTEX,
+        });
+
+        let text_ib = device.create_buffer_init(&BufferInitDescriptor {
+            label: Some("text_ib"),
+            contents: bytemuck::cast_slice(&[0u32, 1, 2, 0, 2, 3]),
+            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::INDEX,
+        });
+
+        let font_atlas = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("font_atlas"),
+            layout: &textured.get_bind_group_layout(0),
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(
+                        &font.texture.create_view(&Default::default()),
+                    ),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Sampler(&device.create_sampler(
+                        &wgpu::SamplerDescriptor {
+                            min_filter: wgpu::FilterMode::Linear,
+                            mag_filter: wgpu::FilterMode::Linear,
+                            ..Default::default()
+                        },
+                    )),
+                },
+            ],
+        });
 
         Ok(Self {
             config,
@@ -237,6 +336,11 @@ impl Canvas {
             queue,
             window,
             fullscreen_quad,
+            textured,
+            font_atlas,
+            text_vb,
+            text_ib,
+            font,
         })
     }
 
@@ -279,8 +383,11 @@ impl Canvas {
                 ..Default::default()
             });
 
-            pass.set_pipeline(&self.fullscreen_quad);
-            pass.draw(0..3, 0..1);
+            pass.set_bind_group(0, &self.font_atlas, &[]);
+            pass.set_vertex_buffer(0, self.text_vb.slice(..));
+            pass.set_index_buffer(self.text_ib.slice(..), wgpu::IndexFormat::Uint32);
+            pass.set_pipeline(&self.textured);
+            pass.draw_indexed(0..6, 0, 0..1);
         }
 
         self.queue.submit([encoder.finish()]);
