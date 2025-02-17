@@ -1,13 +1,31 @@
 use std::{
-    io::{Cursor, Read},
-    path::Path,
+    collections::HashMap, io::{Cursor, Read}, path::Path
 };
 
 use super::Resources;
 
+#[derive(Debug, Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+#[repr(C)]
+pub struct TexturedVertex {
+    pub position: glam::Vec2,
+    pub uv: glam::Vec2,
+}
+
+impl TexturedVertex {
+    pub const VB_DESC: wgpu::VertexBufferLayout<'static> = wgpu::VertexBufferLayout {
+        array_stride: std::mem::size_of::<TexturedVertex>() as _,
+        step_mode: wgpu::VertexStepMode::Vertex,
+        attributes: &wgpu::vertex_attr_array![
+            0 => Float32x2,
+            1 => Float32x2,
+        ],
+    };
+}
+
 pub struct Font {
     pub info: FontData,
     pub texture: wgpu::Texture,
+    pub glyph_map: HashMap<char, usize>,
 }
 
 impl Font {
@@ -70,13 +88,18 @@ impl Font {
         zip.by_index(0)?.read_to_end(&mut buffer)?;
 
         let json = String::from_utf8(buffer)?;
-        let info = serde_json::from_str(&json)?;
+        let info: FontData = serde_json::from_str(&json)?;
 
-        Ok(Self { texture, info })
+        let mut glyph_map = HashMap::new();
+        for (i, glyph) in info.glyphs.iter().enumerate() {
+            glyph_map.insert(glyph.char, i);
+        }
+
+        Ok(Self { texture, info, glyph_map })
     }
 
     pub fn glyph(&self, c: char) -> Option<&Glyph> {
-        self.info.glyphs.iter().find(|glyph| glyph.char == c)
+        self.glyph_map.get(&c).map(|&i| &self.info.glyphs[i])
     }
 }
 

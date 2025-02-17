@@ -6,7 +6,7 @@ use std::sync::Arc;
 use anyhow::Context;
 use resources::{
     camera::{CameraBinder, OrthoCamera},
-    font::Font,
+    font::{Font, TexturedVertex},
     Resources,
 };
 use utils::RenderPipelineBuilder;
@@ -245,24 +245,6 @@ impl Canvas {
         );
         let camera_binder = CameraBinder::new(&device);
         let camera_binding = camera_binder.bind(&device, &camera);
-
-        #[derive(Debug, Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
-        #[repr(C)]
-        struct TexturedVertex {
-            position: glam::Vec2,
-            uv: glam::Vec2,
-        }
-
-        impl TexturedVertex {
-            const VB_DESC: wgpu::VertexBufferLayout<'static> = wgpu::VertexBufferLayout {
-                array_stride: std::mem::size_of::<TexturedVertex>() as _,
-                step_mode: wgpu::VertexStepMode::Vertex,
-                attributes: &wgpu::vertex_attr_array![
-                    0 => Float32x2,
-                    1 => Float32x2,
-                ],
-            };
-        }
 
         let texture_bindgroup_layout =
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
