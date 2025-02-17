@@ -49,20 +49,29 @@ impl<T: bytemuck::Pod + bytemuck::Zeroable> BackedBuffer<T> {
         self.version
     }
 
-    pub fn batch<'a>(&'a mut self, device: &'a wgpu::Device, queue: &'a wgpu::Queue) -> Batch<'a, T> {
+    pub fn batch<'a>(
+        &'a mut self,
+        device: &'a wgpu::Device,
+        queue: &'a wgpu::Queue,
+    ) -> Batch<'a, T> {
         Batch::new(self, device, queue)
     }
 
     #[allow(unused)]
-    pub fn batch_indexed<'a>(&'a mut self, device: &'a wgpu::Device, queue: &'a wgpu::Queue, indices: &'a mut BackedBuffer<u32>) -> IndexedBatch<'a, T> {
+    pub fn batch_indexed<'a>(
+        &'a mut self,
+        device: &'a wgpu::Device,
+        queue: &'a wgpu::Queue,
+        indices: &'a mut BackedBuffer<u32>,
+    ) -> IndexedBatch<'a, T> {
         IndexedBatch::new(device, queue, self, indices)
     }
-    
+
     #[allow(unused)]
     pub fn slice(&self) -> wgpu::BufferSlice<'_> {
         self.buffer.slice(..)
     }
-    
+
     pub fn update(&mut self, queue: &wgpu::Queue, mut f: impl FnMut(&mut [T])) {
         f(&mut self.data);
         queue.write_buffer(&self.buffer, 0, bytemuck::cast_slice(&self.data));
@@ -81,7 +90,11 @@ pub struct Batch<'a, T: bytemuck::Pod + bytemuck::Zeroable> {
 }
 
 impl<'a, T: bytemuck::Pod + bytemuck::Zeroable> Batch<'a, T> {
-    pub fn new(vertices: &'a mut BackedBuffer<T>, device: &'a wgpu::Device, queue: &'a wgpu::Queue) -> Self {
+    pub fn new(
+        vertices: &'a mut BackedBuffer<T>,
+        device: &'a wgpu::Device,
+        queue: &'a wgpu::Queue,
+    ) -> Self {
         Self {
             start_vertex: vertices.len() as _,
             vertices,
@@ -144,14 +157,14 @@ impl<'a, T: bytemuck::Pod + bytemuck::Zeroable> IndexedBatch<'a, T> {
             indices,
         }
     }
-    
+
     #[allow(unused)]
     pub fn vertex(&mut self, v: T) -> &mut Self {
         self.indices.data.push(self.batch.vertices.len());
         self.batch.push(v);
         self
     }
-    
+
     #[allow(unused)]
     pub fn line(&mut self, a: T, b: T) -> &mut Self {
         self.vertex(a);

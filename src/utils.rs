@@ -29,13 +29,13 @@ impl<'a> RenderPipelineBuilder<'a> {
             cache: None,
         }
     }
-    
+
     #[allow(unused)]
     pub fn label(mut self, value: &'a str) -> Self {
         self.label = Some(value);
         self
     }
-    
+
     #[allow(unused)]
     pub fn layout(mut self, layout: &'a wgpu::PipelineLayout) -> Self {
         self.layout = Some(layout);

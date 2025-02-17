@@ -1,6 +1,10 @@
-use std::{fs, path::{Path, PathBuf}};
+use std::{
+    fs,
+    path::{Path, PathBuf},
+};
 
 pub mod buffer;
+pub mod camera;
 pub mod font;
 
 pub struct Resources {
@@ -9,7 +13,9 @@ pub struct Resources {
 
 impl Resources {
     pub fn new(base_dir: impl AsRef<Path>) -> Self {
-        Self { base_dir: base_dir.as_ref().to_owned() }
+        Self {
+            base_dir: base_dir.as_ref().to_owned(),
+        }
     }
 
     pub fn load_binary(&self, path: impl AsRef<Path>) -> anyhow::Result<Vec<u8>> {

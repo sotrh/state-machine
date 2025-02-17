@@ -22,9 +22,17 @@ struct TexturedVertex {
     uv: vec2<f32>,
 }
 
+struct CameraUniform {
+    view_proj: mat4x4<f32>,
+}
+
+@group(1)
+@binding(0)
+var<uniform> camera: CameraUniform;
+
 @vertex
 fn textured(in: TexturedVertex) -> VsOut {
-    return VsOut(vec4(in.position, 0.0, 1.0), in.uv);
+    return VsOut(camera.view_proj * vec4(in.position, 0.0, 1.0), in.uv);
 }
 
 @group(0)

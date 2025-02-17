@@ -4,7 +4,11 @@ mod utils;
 use std::sync::Arc;
 
 use anyhow::Context;
-use resources::{font::Font, Resources};
+use resources::{
+    camera::{CameraBinder, OrthoCamera},
+    font::Font,
+    Resources,
+};
 use utils::RenderPipelineBuilder;
 use wgpu::util::{BufferInitDescriptor, DeviceExt};
 use winit::{
@@ -146,6 +150,8 @@ pub struct Canvas {
     text_vb: wgpu::Buffer,
     text_ib: wgpu::Buffer,
     textured: wgpu::RenderPipeline,
+    camera: OrthoCamera,
+    camera_binding: resources::camera::CameraBinding,
 }
 
 impl Canvas {
@@ -231,6 +237,15 @@ impl Canvas {
             })
             .build(&device)?;
 
+        let camera = OrthoCamera::new(
+            0.0,
+            window.inner_size().width as f32,
+            window.inner_size().height as f32,
+            0.0,
+        );
+        let camera_binder = CameraBinder::new(&device);
+        let camera_binding = camera_binder.bind(&device, &camera);
+
         #[derive(Debug, Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
         #[repr(C)]
         struct TexturedVertex {
@@ -249,7 +264,37 @@ impl Canvas {
             };
         }
 
+        let texture_bindgroup_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("texture_bindgroup_layout"),
+                entries: &[
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Texture {
+                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                            view_dimension: wgpu::TextureViewDimension::D2,
+                            multisampled: false,
+                        },
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 1,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                        count: None,
+                    },
+                ],
+            });
+
+        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("pipeline_layout"),
+            bind_group_layouts: &[&texture_bindgroup_layout, camera_binder.layout()],
+            push_constant_ranges: &[],
+        });
+
         let textured = RenderPipelineBuilder::new()
+            .layout(&pipeline_layout)
             .vertex(wgpu::VertexState {
                 module: &shader,
                 entry_point: Some("textured"),
@@ -269,32 +314,38 @@ impl Canvas {
             .build(&device)?;
 
         let res = Resources::new("res");
+
         let font = Font::load(&res, "OpenSans MSDF.zip", &device, &queue)?;
 
         let glyph = font.glyph('M').unwrap();
         let tex_width = font.texture.width() as f32;
         let tex_height = font.texture.height() as f32;
         let min_uv = glam::vec2(glyph.x as f32 / tex_width, glyph.y as f32 / tex_height);
-        let max_uv = min_uv + glam::vec2(glyph.width as f32 / tex_width, glyph.height as f32 /tex_height);
+        let max_uv = min_uv
+            + glam::vec2(
+                glyph.width as f32 / tex_width,
+                glyph.height as f32 / tex_height,
+            );
+        // let p =
 
         let text_vb = device.create_buffer_init(&BufferInitDescriptor {
             label: Some("text_vb"),
             contents: bytemuck::cast_slice(&[
                 TexturedVertex {
-                    position: glam::vec2(-1.0, -1.0),
-                    uv: glam::vec2(min_uv.x, max_uv.y),
+                    position: glam::vec2(0.0, 0.0),
+                    uv: glam::vec2(min_uv.x, min_uv.y),
                 },
                 TexturedVertex {
-                    position: glam::vec2(1.0, -1.0),
-                    uv: glam::vec2(max_uv.x, max_uv.y),
-                },
-                TexturedVertex {
-                    position: glam::vec2(1.0, 1.0),
+                    position: glam::vec2(100.0, 0.0),
                     uv: glam::vec2(max_uv.x, min_uv.y),
                 },
                 TexturedVertex {
-                    position: glam::vec2(-1.0, 1.0),
-                    uv: glam::vec2(min_uv.x, min_uv.y),
+                    position: glam::vec2(100.0, 100.0),
+                    uv: glam::vec2(max_uv.x, max_uv.y),
+                },
+                TexturedVertex {
+                    position: glam::vec2(0.0, 100.0),
+                    uv: glam::vec2(min_uv.x, max_uv.y),
                 },
             ]),
             usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::VERTEX,
@@ -341,6 +392,8 @@ impl Canvas {
             text_vb,
             text_ib,
             font,
+            camera,
+            camera_binding,
         })
     }
 
@@ -348,10 +401,11 @@ impl Canvas {
         self.config.width = width.max(1);
         self.config.height = height.max(1);
         self.surface.configure(&self.device, &self.config);
+        self.camera.resize(self.config.width, self.config.height);
+        self.camera_binding.update(&self.camera, &self.queue);
     }
 
     pub fn render(&mut self, event_loop: &ActiveEventLoop) {
-        log::info!("Render");
         let frame = match self.surface.get_current_texture() {
             Ok(frame) => frame,
             Err(wgpu::SurfaceError::Outdated) => {
@@ -384,6 +438,7 @@ impl Canvas {
             });
 
             pass.set_bind_group(0, &self.font_atlas, &[]);
+            pass.set_bind_group(1, self.camera_binding.bind_group(), &[]);
             pass.set_vertex_buffer(0, self.text_vb.slice(..));
             pass.set_index_buffer(self.text_ib.slice(..), wgpu::IndexFormat::Uint32);
             pass.set_pipeline(&self.textured);
