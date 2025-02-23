@@ -1,6 +1,10 @@
 use std::{
-    collections::HashMap, io::{Cursor, Read}, path::Path
+    collections::HashMap,
+    io::{Cursor, Read},
+    path::Path,
 };
+
+use wgpu::util::{BufferInitDescriptor, DeviceExt};
 
 use super::Resources;
 
@@ -95,23 +99,96 @@ impl Font {
             glyph_map.insert(glyph.char, i);
         }
 
-        Ok(Self { texture, info, glyph_map })
+        Ok(Self {
+            texture,
+            info,
+            glyph_map,
+        })
     }
 
     pub fn glyph(&self, c: char) -> Option<&Glyph> {
         self.glyph_map.get(&c).map(|&i| &self.info.glyphs[i])
     }
+
+    pub fn buffer_text(
+        &self,
+        device: &wgpu::Device,
+        text: &str,
+    ) -> (wgpu::Buffer, wgpu::Buffer, usize) {
+        let mut cursor = 0.0;
+        let mut i = 0u32;
+
+        let mut verts = Vec::new();
+        let mut indices = Vec::new();
+        for c in text.chars() {
+            let glyph = self.glyph(c).unwrap();
+            
+            if glyph.width == 0 || glyph.height == 0 {
+                cursor += glyph.xadvance as f32;
+                continue;
+            }
+
+            let tex_width = self.texture.width() as f32;
+            let tex_height = self.texture.height() as f32;
+            let min_uv = glam::vec2(glyph.x as f32 / tex_width, glyph.y as f32 / tex_height);
+            let max_uv = min_uv
+                + glam::vec2(
+                    glyph.width as f32 / tex_width,
+                    glyph.height as f32 / tex_height,
+                );
+
+            let p1 = glam::vec2(cursor + glyph.xoffset as f32 + 20.0, glyph.yoffset as f32 + 20.0);
+            let p2 = p1 + glam::vec2(glyph.width as f32, glyph.height as f32);
+
+            verts.extend_from_slice(&[
+                TexturedVertex {
+                    position: glam::vec2(p1.x, p1.y),
+                    uv: glam::vec2(min_uv.x, min_uv.y),
+                },
+                TexturedVertex {
+                    position: glam::vec2(p2.x, p1.y),
+                    uv: glam::vec2(max_uv.x, min_uv.y),
+                },
+                TexturedVertex {
+                    position: glam::vec2(p2.x, p2.y),
+                    uv: glam::vec2(max_uv.x, max_uv.y),
+                },
+                TexturedVertex {
+                    position: glam::vec2(p1.x, p2.y),
+                    uv: glam::vec2(min_uv.x, max_uv.y),
+                },
+            ]);
+
+            indices.extend_from_slice(&[i, i + 1, i + 2, i, i + 2, i + 3]);
+
+            cursor += glyph.xadvance as f32;
+            i += 4;
+        }
+
+        let vb = device.create_buffer_init(&BufferInitDescriptor {
+            label: Some(text),
+            contents: bytemuck::cast_slice(&verts),
+            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::VERTEX,
+        });
+        let ib = device.create_buffer_init(&BufferInitDescriptor {
+            label: Some(text),
+            contents: bytemuck::cast_slice(&indices),
+            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::INDEX,
+        });
+
+        (vb, ib, indices.len())
+    }
 }
 
 #[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
 pub struct FontData {
-    pages: Vec<String>,
+    pub pages: Vec<String>,
     #[serde(rename = "chars")]
-    glyphs: Vec<Glyph>,
-    info: FontInfo,
-    common: FontCommonInfo,
+    pub glyphs: Vec<Glyph>,
+    pub info: FontInfo,
+    pub common: FontCommonInfo,
     #[serde(rename = "distanceField")]
-    distance_field: DistanceFieldInfo,
+    pub distance_field: DistanceFieldInfo,
 }
 
 #[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
@@ -132,45 +209,45 @@ pub struct Glyph {
 
 #[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
 pub struct FontInfo {
-    face: String,
-    size: u32,
-    bold: u32,
-    italic: u32,
-    charset: Vec<char>,
-    unicode: u32,
+    pub face: String,
+    pub size: u32,
+    pub bold: u32,
+    pub italic: u32,
+    pub charset: Vec<char>,
+    pub unicode: u32,
     #[serde(rename = "stretchH")]
-    stretch_h: u32,
-    smooth: u32,
-    aa: u32,
-    padding: [u32; 4],
-    spacing: [u32; 2],
+    pub stretch_h: u32,
+    pub smooth: u32,
+    pub aa: u32,
+    pub padding: [u32; 4],
+    pub spacing: [u32; 2],
 }
 
 #[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
 pub struct FontCommonInfo {
     #[serde(rename = "lineHeight")]
-    line_height: u32,
-    base: u32,
+    pub line_height: u32,
+    pub base: u32,
     #[serde(rename = "scaleW")]
-    scale_w: u32,
+    pub scale_w: u32,
     #[serde(rename = "scaleH")]
-    scale_h: u32,
-    pages: u32,
-    packed: u32,
+    pub scale_h: u32,
+    pub pages: u32,
+    pub packed: u32,
     #[serde(rename = "alphaChnl")]
-    alpha_channel: u32,
+    pub alpha_channel: u32,
     #[serde(rename = "redChnl")]
-    red_channel: u32,
+    pub red_channel: u32,
     #[serde(rename = "greenChnl")]
-    green_channel: u32,
+    pub green_channel: u32,
     #[serde(rename = "blueChnl")]
-    blue_channel: u32,
+    pub blue_channel: u32,
 }
 
 #[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
 pub struct DistanceFieldInfo {
     #[serde(rename = "fieldType")]
-    field_type: String,
+    pub field_type: String,
     #[serde(rename = "distanceRange")]
-    distance_range: u32,
+    pub distance_range: u32,
 }

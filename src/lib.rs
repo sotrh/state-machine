@@ -1,16 +1,17 @@
-mod resources;
-mod utils;
+pub mod resources;
+pub mod utils;
 
 use std::sync::Arc;
 
 use anyhow::Context;
+use glam::{vec2, Vec2};
 use resources::{
     camera::{CameraBinder, OrthoCamera},
     font::{Font, TexturedVertex},
     Resources,
 };
 use utils::RenderPipelineBuilder;
-use wgpu::util::{BufferInitDescriptor, DeviceExt};
+use wgpu::{util::{BufferInitDescriptor, DeviceExt}, ShaderStages};
 use winit::{
     application::ApplicationHandler,
     event::{KeyEvent, MouseButton, WindowEvent},
@@ -152,6 +153,8 @@ pub struct Canvas {
     textured: wgpu::RenderPipeline,
     camera: OrthoCamera,
     camera_binding: resources::camera::CameraBinding,
+    num_indices: usize,
+    font_uniform_bg: wgpu::BindGroup,
 }
 
 impl Canvas {
@@ -268,10 +271,67 @@ impl Canvas {
                     },
                 ],
             });
+        let res = Resources::new("res");
+
+        let font = Font::load(&res, "OpenSans MSDF.zip", &device, &queue)?;
+
+        #[derive(Debug, Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+        #[repr(C)]
+        struct FontUniforms {
+            unit_range: Vec2,
+            in_bias: f32,
+            out_bias: f32,
+            smoothness: f32,
+            super_sample: f32,
+            inv_gamma: f32,
+            _padding: u32,
+        };
+
+        let font_uniforms = FontUniforms {
+            unit_range: vec2(
+                font.info.distance_field.distance_range as f32 / font.info.common.scale_w as f32,
+                font.info.distance_field.distance_range as f32 / font.info.common.scale_h as f32,
+            ),
+            in_bias: 0.0,
+            out_bias: 0.0,
+            smoothness: 0.0,
+            super_sample: 0.0,
+            inv_gamma: 1.0 / 1.0,
+            _padding: 0,
+        };
+
+        let font_uniform_buffer = device.create_buffer_init(&BufferInitDescriptor {
+            label: Some("font_uniform_buffer"),
+            contents: bytemuck::bytes_of(&font_uniforms),
+            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::UNIFORM,
+        });
+
+        let font_uniform_bg_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("font_uniform_bg_layout"),
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Buffer { ty: wgpu::BufferBindingType::Uniform, has_dynamic_offset: false, min_binding_size: None },
+                    count: None,
+                }
+            ]
+        });
+
+        let font_uniform_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("font_uniform_bg"),
+            layout: &font_uniform_bg_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: font_uniform_buffer.as_entire_binding(),
+                }
+            ]
+        });
 
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("pipeline_layout"),
-            bind_group_layouts: &[&texture_bindgroup_layout, camera_binder.layout()],
+            bind_group_layouts: &[&texture_bindgroup_layout, camera_binder.layout(), &font_uniform_bg_layout],
             push_constant_ranges: &[],
         });
 
@@ -285,59 +345,17 @@ impl Canvas {
             })
             .fragment(wgpu::FragmentState {
                 module: &shader,
-                entry_point: Some("canvas"),
+                entry_point: Some("msdf_text"),
                 compilation_options: Default::default(),
                 targets: &[Some(wgpu::ColorTargetState {
                     format: config.view_formats[0],
-                    blend: None,
+                    blend: Some(wgpu::BlendState::ALPHA_BLENDING),
                     write_mask: wgpu::ColorWrites::ALL,
                 })],
             })
             .build(&device)?;
 
-        let res = Resources::new("res");
-
-        let font = Font::load(&res, "OpenSans MSDF.zip", &device, &queue)?;
-
-        let glyph = font.glyph('M').unwrap();
-        let tex_width = font.texture.width() as f32;
-        let tex_height = font.texture.height() as f32;
-        let min_uv = glam::vec2(glyph.x as f32 / tex_width, glyph.y as f32 / tex_height);
-        let max_uv = min_uv
-            + glam::vec2(
-                glyph.width as f32 / tex_width,
-                glyph.height as f32 / tex_height,
-            );
-        // let p =
-
-        let text_vb = device.create_buffer_init(&BufferInitDescriptor {
-            label: Some("text_vb"),
-            contents: bytemuck::cast_slice(&[
-                TexturedVertex {
-                    position: glam::vec2(0.0, 0.0),
-                    uv: glam::vec2(min_uv.x, min_uv.y),
-                },
-                TexturedVertex {
-                    position: glam::vec2(100.0, 0.0),
-                    uv: glam::vec2(max_uv.x, min_uv.y),
-                },
-                TexturedVertex {
-                    position: glam::vec2(100.0, 100.0),
-                    uv: glam::vec2(max_uv.x, max_uv.y),
-                },
-                TexturedVertex {
-                    position: glam::vec2(0.0, 100.0),
-                    uv: glam::vec2(min_uv.x, max_uv.y),
-                },
-            ]),
-            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::VERTEX,
-        });
-
-        let text_ib = device.create_buffer_init(&BufferInitDescriptor {
-            label: Some("text_ib"),
-            contents: bytemuck::cast_slice(&[0u32, 1, 2, 0, 2, 3]),
-            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::INDEX,
-        });
+        let (text_vb, text_ib, num_indices) = font.buffer_text(&device, "Hello, World!");
 
         let font_atlas = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("font_atlas"),
@@ -373,9 +391,11 @@ impl Canvas {
             font_atlas,
             text_vb,
             text_ib,
+            num_indices,
             font,
             camera,
             camera_binding,
+            font_uniform_bg,
         })
     }
 
@@ -421,10 +441,11 @@ impl Canvas {
 
             pass.set_bind_group(0, &self.font_atlas, &[]);
             pass.set_bind_group(1, self.camera_binding.bind_group(), &[]);
+            pass.set_bind_group(2, &self.font_uniform_bg, &[]);
             pass.set_vertex_buffer(0, self.text_vb.slice(..));
             pass.set_index_buffer(self.text_ib.slice(..), wgpu::IndexFormat::Uint32);
             pass.set_pipeline(&self.textured);
-            pass.draw_indexed(0..6, 0, 0..1);
+            pass.draw_indexed(0..self.num_indices as u32, 0, 0..1);
         }
 
         self.queue.submit([encoder.finish()]);
