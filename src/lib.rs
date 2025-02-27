@@ -7,11 +7,14 @@ use anyhow::Context;
 use glam::{vec2, Vec2};
 use resources::{
     camera::{CameraBinder, OrthoCamera},
-    font::{Font, TexturedVertex},
+    font::{Font, TextPipeline, TexturedVertex},
     Resources,
 };
 use utils::RenderPipelineBuilder;
-use wgpu::{util::{BufferInitDescriptor, DeviceExt}, ShaderStages};
+use wgpu::{
+    util::{BufferInitDescriptor, DeviceExt},
+    ShaderStages,
+};
 use winit::{
     application::ApplicationHandler,
     event::{KeyEvent, MouseButton, WindowEvent},
@@ -147,14 +150,12 @@ pub struct Canvas {
     font: Font,
     #[allow(unused)]
     window: Arc<Window>,
-    font_atlas: wgpu::BindGroup,
-    text_vb: wgpu::Buffer,
-    text_ib: wgpu::Buffer,
-    textured: wgpu::RenderPipeline,
     camera: OrthoCamera,
     camera_binding: resources::camera::CameraBinding,
-    num_indices: usize,
-    font_uniform_bg: wgpu::BindGroup,
+    text_pipeline: TextPipeline,
+    mspt_text: resources::font::TextBuffer,
+    last_time: std::time::Instant,
+    num_ticks: u32,
 }
 
 impl Canvas {
@@ -275,110 +276,18 @@ impl Canvas {
 
         let font = Font::load(&res, "OpenSans MSDF.zip", &device, &queue)?;
 
-        #[derive(Debug, Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
-        #[repr(C)]
-        struct FontUniforms {
-            unit_range: Vec2,
-            in_bias: f32,
-            out_bias: f32,
-            smoothness: f32,
-            super_sample: f32,
-            inv_gamma: f32,
-            _padding: u32,
-        };
+        let text_pipeline = TextPipeline::new(
+            &font,
+            &camera_binder,
+            config.view_formats[0],
+            &texture_bindgroup_layout,
+            &shader,
+            &device,
+        )?;
 
-        let font_uniforms = FontUniforms {
-            unit_range: vec2(
-                font.info.distance_field.distance_range as f32 / font.info.common.scale_w as f32,
-                font.info.distance_field.distance_range as f32 / font.info.common.scale_h as f32,
-            ),
-            in_bias: 0.0,
-            out_bias: 0.0,
-            smoothness: 0.0,
-            super_sample: 0.0,
-            inv_gamma: 1.0 / 1.0,
-            _padding: 0,
-        };
+        let mspt_text = text_pipeline.buffer_text(&font, &device, "Tick Rate: ----")?;
 
-        let font_uniform_buffer = device.create_buffer_init(&BufferInitDescriptor {
-            label: Some("font_uniform_buffer"),
-            contents: bytemuck::bytes_of(&font_uniforms),
-            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::UNIFORM,
-        });
-
-        let font_uniform_bg_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("font_uniform_bg_layout"),
-            entries: &[
-                wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Buffer { ty: wgpu::BufferBindingType::Uniform, has_dynamic_offset: false, min_binding_size: None },
-                    count: None,
-                }
-            ]
-        });
-
-        let font_uniform_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("font_uniform_bg"),
-            layout: &font_uniform_bg_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: font_uniform_buffer.as_entire_binding(),
-                }
-            ]
-        });
-
-        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("pipeline_layout"),
-            bind_group_layouts: &[&texture_bindgroup_layout, camera_binder.layout(), &font_uniform_bg_layout],
-            push_constant_ranges: &[],
-        });
-
-        let textured = RenderPipelineBuilder::new()
-            .layout(&pipeline_layout)
-            .vertex(wgpu::VertexState {
-                module: &shader,
-                entry_point: Some("textured"),
-                compilation_options: Default::default(),
-                buffers: &[TexturedVertex::VB_DESC],
-            })
-            .fragment(wgpu::FragmentState {
-                module: &shader,
-                entry_point: Some("msdf_text"),
-                compilation_options: Default::default(),
-                targets: &[Some(wgpu::ColorTargetState {
-                    format: config.view_formats[0],
-                    blend: Some(wgpu::BlendState::ALPHA_BLENDING),
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
-            })
-            .build(&device)?;
-
-        let (text_vb, text_ib, num_indices) = font.buffer_text(&device, "Hello, World!");
-
-        let font_atlas = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("font_atlas"),
-            layout: &textured.get_bind_group_layout(0),
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::TextureView(
-                        &font.texture.create_view(&Default::default()),
-                    ),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::Sampler(&device.create_sampler(
-                        &wgpu::SamplerDescriptor {
-                            min_filter: wgpu::FilterMode::Linear,
-                            mag_filter: wgpu::FilterMode::Linear,
-                            ..Default::default()
-                        },
-                    )),
-                },
-            ],
-        });
+        let last_time = web_time::Instant::now();
 
         Ok(Self {
             config,
@@ -387,15 +296,13 @@ impl Canvas {
             queue,
             window,
             fullscreen_quad,
-            textured,
-            font_atlas,
-            text_vb,
-            text_ib,
-            num_indices,
+            mspt_text,
             font,
             camera,
             camera_binding,
-            font_uniform_bg,
+            text_pipeline,
+            last_time,
+            num_ticks: 0,
         })
     }
 
@@ -408,6 +315,8 @@ impl Canvas {
     }
 
     pub fn render(&mut self, event_loop: &ActiveEventLoop) {
+        self.window.request_redraw();
+
         let frame = match self.surface.get_current_texture() {
             Ok(frame) => frame,
             Err(wgpu::SurfaceError::Outdated) => {
@@ -419,6 +328,19 @@ impl Canvas {
                 return;
             }
         };
+
+        if self.num_ticks == 100 {
+            self.text_pipeline.update_text(
+                &self.font,
+                &format!("Tick Rate: {:?}", self.last_time.elapsed() / 100),
+                &mut self.mspt_text,
+                &self.device,
+                &self.queue,
+            ).unwrap();
+            self.last_time = web_time::Instant::now();
+            self.num_ticks = 0;
+        }
+        self.num_ticks += 1;
 
         let view = frame.texture.create_view(&wgpu::TextureViewDescriptor {
             format: self.config.view_formats.get(0).copied(),
@@ -439,13 +361,8 @@ impl Canvas {
                 ..Default::default()
             });
 
-            pass.set_bind_group(0, &self.font_atlas, &[]);
-            pass.set_bind_group(1, self.camera_binding.bind_group(), &[]);
-            pass.set_bind_group(2, &self.font_uniform_bg, &[]);
-            pass.set_vertex_buffer(0, self.text_vb.slice(..));
-            pass.set_index_buffer(self.text_ib.slice(..), wgpu::IndexFormat::Uint32);
-            pass.set_pipeline(&self.textured);
-            pass.draw_indexed(0..self.num_indices as u32, 0, 0..1);
+            self.text_pipeline
+                .draw_text(&mut pass, &self.mspt_text, &self.camera_binding);
         }
 
         self.queue.submit([encoder.finish()]);

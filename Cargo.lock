@@ -2319,6 +2319,7 @@ dependencies = [
  "serde_json",
  "wasm-bindgen",
  "wasm-bindgen-futures",
+ "web-time",
  "wgpu",
  "winit",
  "zip",
