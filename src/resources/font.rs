@@ -1,5 +1,7 @@
 use std::{
-    collections::HashMap, io::{Cursor, Read}, ops::{Deref, DerefMut}, path::Path
+    collections::HashMap,
+    io::{Cursor, Read},
+    path::Path,
 };
 
 use anyhow::Context;
@@ -8,7 +10,10 @@ use wgpu::util::{BufferInitDescriptor, DeviceExt};
 
 use crate::utils::RenderPipelineBuilder;
 
-use super::{camera::{CameraBinder, CameraBinding}, Resources};
+use super::{
+    camera::{CameraBinder, CameraBinding},
+    Resources,
+};
 
 #[derive(Debug, Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
 #[repr(C)]
@@ -168,7 +173,7 @@ impl TextPipeline {
         device: &wgpu::Device,
         text: &str,
     ) -> anyhow::Result<TextBuffer> {
-        let (verts, indices) = generate_text_data(font, text)?;
+        let (verts, indices) = generate_text_data(font, text, font.unknown_char);
 
         let vb = device.create_buffer_init(&BufferInitDescriptor {
             label: Some(text),
@@ -196,7 +201,7 @@ impl TextPipeline {
         device: &wgpu::Device,
         queue: &wgpu::Queue,
     ) -> anyhow::Result<()> {
-        let (verts, indices) = generate_text_data(font, text)?;
+        let (verts, indices) = generate_text_data(font, text, font.unknown_char);
 
         if verts.len() * size_of::<TexturedVertex>() > buffer.vertices.size() as usize {
             buffer.vertices = device.create_buffer_init(&BufferInitDescriptor {
@@ -222,8 +227,13 @@ impl TextPipeline {
 
         Ok(())
     }
-    
-    pub fn draw_text(&self, pass: &mut wgpu::RenderPass<'_>, text: &TextBuffer, camera_binding: &CameraBinding) {
+
+    pub fn draw_text(
+        &self,
+        pass: &mut wgpu::RenderPass<'_>,
+        text: &TextBuffer,
+        camera_binding: &CameraBinding,
+    ) {
         pass.set_bind_group(0, &self.font_atlas, &[]);
         pass.set_bind_group(1, camera_binding.bind_group(), &[]);
         pass.set_bind_group(2, &self.font_uniform_bg, &[]);
@@ -232,10 +242,9 @@ impl TextPipeline {
         pass.set_pipeline(&self.text_pipeline);
         pass.draw_indexed(0..text.num_indices as u32, 0, 0..1);
     }
-
 }
 
-fn generate_text_data(font: &Font, text: &str) -> anyhow::Result<(Vec<TexturedVertex>, Vec<u32>)> {
+fn generate_text_data(font: &Font, text: &str, unknown_char: char) -> (Vec<TexturedVertex>, Vec<u32>) {
     let tex_width = font.texture.width() as f32;
     let tex_height = font.texture.height() as f32;
 
@@ -245,7 +254,9 @@ fn generate_text_data(font: &Font, text: &str) -> anyhow::Result<(Vec<TexturedVe
     let mut verts = Vec::new();
     let mut indices = Vec::new();
     for c in text.chars() {
-        let glyph = font.glyph(c).with_context(|| format!("Unexpected character: '{c}'"))?;
+        let glyph = font
+            .glyph(c)
+            .unwrap_or_else(|| font.unknown_glyph());
 
         if glyph.width == 0 || glyph.height == 0 {
             cursor += glyph.xadvance as f32;
@@ -289,7 +300,7 @@ fn generate_text_data(font: &Font, text: &str) -> anyhow::Result<(Vec<TexturedVe
         cursor += glyph.xadvance as f32;
         i += 4;
     }
-    Ok((verts, indices))
+    (verts, indices)
 }
 
 pub struct TextBuffer {
@@ -300,6 +311,7 @@ pub struct TextBuffer {
 }
 
 pub struct Font {
+    unknown_char: char,
     pub info: FontData,
     pub texture: wgpu::Texture,
     pub glyph_map: HashMap<char, usize>,
@@ -309,6 +321,7 @@ impl Font {
     pub fn load(
         resources: &Resources,
         path: impl AsRef<Path>,
+        unknown_char: char,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
     ) -> anyhow::Result<Self> {
@@ -372,7 +385,12 @@ impl Font {
             glyph_map.insert(glyph.char, i);
         }
 
+        if !glyph_map.contains_key(&unknown_char) {
+            anyhow::bail!("'{unknown_char}' not supported by font");
+        }
+
         Ok(Self {
+            unknown_char,
             texture,
             info,
             glyph_map,
@@ -381,6 +399,10 @@ impl Font {
 
     pub fn glyph(&self, c: char) -> Option<&Glyph> {
         self.glyph_map.get(&c).map(|&i| &self.info.glyphs[i])
+    }
+    
+    pub fn unknown_glyph(&self) -> &Glyph {
+        self.glyph(self.unknown_char).unwrap()
     }
 }
 

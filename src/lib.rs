@@ -4,17 +4,12 @@ pub mod utils;
 use std::sync::Arc;
 
 use anyhow::Context;
-use glam::{vec2, Vec2};
 use resources::{
     camera::{CameraBinder, OrthoCamera},
-    font::{Font, TextPipeline, TexturedVertex},
+    font::{Font, TextPipeline},
     Resources,
 };
 use utils::RenderPipelineBuilder;
-use wgpu::{
-    util::{BufferInitDescriptor, DeviceExt},
-    ShaderStages,
-};
 use winit::{
     application::ApplicationHandler,
     event::{KeyEvent, MouseButton, WindowEvent},
@@ -116,8 +111,8 @@ impl ApplicationHandler<Canvas> for App {
             WindowEvent::RedrawRequested => {
                 canvas.render(event_loop);
             }
-            WindowEvent::ModifiersChanged(mods) => {}
-            WindowEvent::CursorMoved { position, .. } => {}
+            WindowEvent::ModifiersChanged(_mods) => {}
+            WindowEvent::CursorMoved { .. } => {}
             WindowEvent::MouseInput { state, button, .. } => match (button, state.is_pressed()) {
                 (MouseButton::Left, true) => {}
                 (MouseButton::Left, false) => {}
@@ -274,7 +269,7 @@ impl Canvas {
             });
         let res = Resources::new("res");
 
-        let font = Font::load(&res, "OpenSans MSDF.zip", &device, &queue)?;
+        let font = Font::load(&res, "OpenSans MSDF.zip", '�', &device, &queue)?;
 
         let text_pipeline = TextPipeline::new(
             &font,
@@ -330,13 +325,15 @@ impl Canvas {
         };
 
         if self.num_ticks == 100 {
-            self.text_pipeline.update_text(
-                &self.font,
-                &format!("Tick Rate: {:?}", self.last_time.elapsed() / 100),
-                &mut self.mspt_text,
-                &self.device,
-                &self.queue,
-            ).unwrap();
+            self.text_pipeline
+                .update_text(
+                    &self.font,
+                    &format!("Tick Rate: {:?}", self.last_time.elapsed() / 100),
+                    &mut self.mspt_text,
+                    &self.device,
+                    &self.queue,
+                )
+                .unwrap();
             self.last_time = web_time::Instant::now();
             self.num_ticks = 0;
         }
